@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f3a5f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<title>Saha Gözlem Raporu</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--ink:#1c2430;--mut:#667;--line:#cfd5dd;--pri:#1f3a5f}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);padding:12px;max-width:900px;margin:auto}
+h1{font-size:20px;margin:6px 0 12px}
+details,.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px}
+summary{font-weight:600;cursor:pointer}
+label{display:block;font-size:12px;color:var(--mut);margin-top:8px}
+input,textarea,select{width:100%;font:inherit;padding:7px;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink)}
+button{font:inherit;padding:10px 14px;border:0;border-radius:6px;background:var(--pri);color:#fff;cursor:pointer}
+button.g{background:#e6e9ee;color:var(--ink)}
+button:disabled{opacity:.5}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.item{display:grid;grid-template-columns:120px 1fr;gap:10px}
+.item img{width:120px;border-radius:6px}
+.ed{border:1px dashed var(--line);padding:6px;border-radius:6px;white-space:pre-line;min-height:32px}
+.risk{display:flex;gap:6px;align-items:center;margin-top:6px}
+.risk input{width:54px}
+.badge{color:#fff;font-weight:700;padding:4px 14px;border-radius:3px;display:inline-block}
+#msg{color:#b00;font-size:13px}
+#print{display:none}
+@media(max-width:560px){.item{grid-template-columns:1fr}.item img{width:100%}}
+/* Yazdırma */
+@page{size:A4;margin:12mm 10mm 30mm}
+@media print{
+ body{background:#fff;padding:0;max-width:none;font-size:11px}
+ #app{display:none}
+ #print{display:block}
+ #print h2{text-align:center;border-bottom:3px solid #000;padding-bottom:6px;margin:0 0 8px;font-size:18px}
+ #print table{width:100%;border-collapse:collapse}
+ #print th,#print td{border:1px solid #333;padding:5px;vertical-align:middle}
+ #print th{background:#eee}
+ #print td.c{text-align:center}
+ #print tr{break-inside:avoid}
+ #print img{max-width:100%;max-height:150px}
+ #print .cap{font-size:9px;font-style:italic;color:#555}
+ #print ul{margin:0;padding-left:14px}
+ #print .badge{font-size:12px}
+ .ref{break-before:page}
+ .ref div{border:1px solid #333;padding:6px;margin-bottom:6px}
+ .ref b{display:block;font-size:12px}
+ .sign{position:fixed;bottom:-22mm;left:0;right:0;display:flex;justify-content:space-around;text-align:center;font-size:10px}
+ .sign div{width:42%;border-bottom:2px solid #000;padding-bottom:4px}
+ *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<div id="app">
+<h1>Saha Gözlem Raporu</h1>
+
+<details id="ayar">
+<summary>Ayarlar ve rapor bilgileri</summary>
+<label>Gemini API anahtarı (yalnızca bu cihazda saklanır)</label>
+<input id="key" type="password" placeholder="AIza...">
+<div class="row">
+<div><label>Rapor no</label><input id="rno" placeholder="2026-001"></div>
+<div><label>Rapor tarihi</label><input id="rtar" type="date"></div>
+</div>
+<label>Firma</label><input id="firma">
+<label>Firma adresi</label><input id="adres">
+<div class="row">
+<div><label>Hazırlayan</label><input id="haz"></div>
+<div><label>Unvan / belge no</label><input id="unv" placeholder="A Sınıfı İş Güvenliği Uzmanı - İGU-000000"></div>
+</div>
+<button class="g" style="margin-top:10px" onclick="saveMeta();this.textContent='Kaydedildi'">Kaydet</button>
+</details>
+
+<div class="bar">
+<input id="file" type="file" accept="image/*" multiple hidden>
+<button onclick="file.click()">Fotoğraf ekle</button>
+<button class="g" onclick="analyzeAll()">Tümünü analiz et</button>
+<button class="g" onclick="doPrint()">PDF / Yazdır</button>
+<button class="g" onclick="if(confirm('Tüm satırlar silinsin mi?')){rows=[];render()}">Temizle</button>
+</div>
+<div id="msg"></div>
+<div id="list"></div>
+</div>
+
+<div id="print"></div>
+
+<script>
+const MEV={
+"Makina Emniyeti Yönetmeliği":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=12907&MevzuatTur=7&MevzuatTertip=5",
+"Kişisel Koruyucu Donanım Yönetmeliği":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=31465&MevzuatTur=7&MevzuatTertip=5",
+"İş Ekipmanlarının Kullanımında Sağlık ve Güvenlik Şartları Yönetmeliği":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=18318&MevzuatTur=7&MevzuatTertip=5",
+"İşyeri Bina ve Eklentilerinde Alınacak Sağlık ve Güvenlik Önlemlerine İlişkin Yönetmelik":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=18592&MevzuatTur=7&MevzuatTertip=5",
+"Kimyasal Maddelerle Çalışmalarda Sağlık ve Güvenlik Önlemleri Hakkında Yönetmelik":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=18709&MevzuatTur=7&MevzuatTertip=5",
+"Binaların Yangından Korunması Hakkında Yönetmelik":"https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=200712937&MevzuatTur=21&MevzuatTertip=5"
+};
+const $=id=>document.getElementById(id);
+const S=(k,v)=>{try{v===undefined?localStorage.getItem(k):localStorage.setItem(k,v)}catch(e){}};
+const G=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
+const metaIds=['key','rno','rtar','firma','adres','haz','unv'];
+metaIds.forEach(i=>$(i).value=G('m_'+i));
+if(!$('rtar').value)$('rtar').value=new Date().toISOString().slice(0,10);
+if(!G('m_key'))$('ayar').open=true;
+function saveMeta(){metaIds.forEach(i=>S('m_'+i,$(i).value))}
+let rows=[];
+const color=r=>r>=20?'#f26b6b':r>=15?'#f47a5a':r>=10?'#e8590c':r>=6?'#fb923c':'#d4a017';
+const esc=s=>(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+$('file').onchange=async e=>{
+ for(const f of e.target.files){rows.push({img:await shrink(f),cap:'',unc:'',onl:'',mev:'',o:3,s:3})}
+ e.target.value='';render();
+};
+function shrink(f){return new Promise(res=>{
+ const im=new Image();im.onload=()=>{const m=1024,k=Math.min(1,m/Math.max(im.width,im.height));
+ const c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;
+ c.getContext('2d').drawImage(im,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.8))};
+ im.src=URL.createObjectURL(f)})}
+
+function render(){
+ $('list').innerHTML=rows.map((r,i)=>`<div class="card item">
+ <div><img src="${r.img}"><label>Görsel açıklaması</label><input value="${esc(r.cap)}" oninput="rows[${i}].cap=this.value"></div>
+ <div>
+ <label>Uygunsuzluk</label><div class="ed" contenteditable oninput="rows[${i}].unc=this.innerText">${esc(r.unc)}</div>
+ <label>Alınması gereken önlemler (her satır bir madde)</label><div class="ed" contenteditable oninput="rows[${i}].onl=this.innerText">${esc(r.onl)}</div>
+ <label>Mevzuat referansı</label><div class="ed" contenteditable oninput="rows[${i}].mev=this.innerText">${esc(r.mev)}</div>
+ <div class="risk">Olasılık<input type="number" min="1" max="5" value="${r.o}" oninput="rows[${i}].o=+this.value;upd(${i})">
+ Şiddet<input type="number" min="1" max="5" value="${r.s}" oninput="rows[${i}].s=+this.value;upd(${i})">
+ <span class="badge" id="b${i}" style="background:${color(r.o*r.s)}">${r.o*r.s}</span></div>
+ <div class="bar"><button class="g" onclick="analyze(${i},this)">Analiz et</button><button class="g" onclick="rows.splice(${i},1);render()">Sil</button></div>
+ </div></div>`).join('')||'<div class="card">Fotoğraf ekleyerek başlayın.</div>';
+}
+function upd(i){const r=rows[i],b=$('b'+i);b.textContent=r.o*r.s;b.style.background=color(r.o*r.s)}
+
+async function analyze(i,btn){
+ const key=G('m_key')||$('key').value;
+ if(!key){$('msg').textContent='Önce Ayarlar bölümüne API anahtarını girip Kaydet deyin.';$('ayar').open=true;return}
+ $('msg').textContent='';if(btn){btn.disabled=true;btn.textContent='Analiz ediliyor...'}
+ const prompt=`Sen Türkiye'de çalışan deneyimli bir A sınıfı iş güvenliği uzmanısın. Fotoğraftaki en önemli iş sağlığı ve güvenliği uygunsuzluğunu tespit et. Sadece fotoğrafta gerçekten görülebilen şeyleri yaz; emin değilsen bunu belirt. Yanıtı JSON olarak ver:
+{"baslik":"kısa görsel etiketi (küçük harf, 3-6 kelime)","uygunsuzluk":"1-3 cümle, resmi dil, '...görülmektedir/bulunmamaktadır' üslubu","onlemler":["2-4 uygulanabilir önlem maddesi"],"mevzuat":"şu listeden tam olarak biri: ${Object.keys(MEV).join(' | ')}","olasilik":1-5 tam sayı,"siddet":1-5 tam sayı}`;
+ try{
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key='+encodeURIComponent(key),{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({contents:[{parts:[{text:prompt},{inline_data:{mime_type:'image/jpeg',data:rows[i].img.split(',')[1]}}]}],generationConfig:{responseMimeType:'application/json'}})});
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.error?.message||r.status);
+  const j=JSON.parse(d.candidates[0].content.parts.map(p=>p.text||'').join(''));
+  Object.assign(rows[i],{cap:j.baslik||'',unc:j.uygunsuzluk||'',onl:(j.onlemler||[]).join('\n'),mev:j.mevzuat||'',o:Math.min(5,Math.max(1,+j.olasilik||3)),s:Math.min(5,Math.max(1,+j.siddet||3))});
+ }catch(e){$('msg').textContent='Analiz başarısız: '+e.message+' (API anahtarını ve internet bağlantısını kontrol edin.)'}
+ render();
+}
+async function analyzeAll(){for(let i=0;i<rows.length;i++)if(!rows[i].unc)await analyze(i)}
+
+function doPrint(){
+ if(!rows.length){$('msg').textContent='Yazdırmak için en az bir satır ekleyin.';return}
+ const v=id=>esc($(id).value),tar=$('rtar').value.split('-').reverse().join('.');
+ const used=Object.keys(MEV).filter(n=>rows.some(r=>r.mev.includes(n)));
+ $('print').innerHTML=`<h2>SAHA GÖZLEM RAPORU</h2>
+ <table style="margin-bottom:8px"><tr><th>Rapor No</th><td>${v('rno')}</td><th>Rapor Tarihi</th><td>${tar}</td></tr>
+ <tr><th>Firma</th><td colspan="3">${v('firma')}</td></tr><tr><th>Firma Adresi</th><td colspan="3">${v('adres')}</td></tr></table>
+ <table><thead><tr><th>No</th><th>Görsel</th><th>Uygunsuzluk</th><th>Alınması Gereken Önlemler</th><th>Mevzuat Referansı</th><th>Risk</th></tr></thead><tbody>
+ ${rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="c"><img src="${r.img}"><div class="cap">${esc(r.cap)}</div></td><td>${esc(r.unc)}</td>
+ <td><ul>${r.onl.split('\n').filter(x=>x.trim()).map(x=>`<li>${esc(x.replace(/^[•\-\s]+/,''))}</li>`).join('')}</ul></td><td>${esc(r.mev)}</td>
+ <td class="c"><span class="badge" style="background:${color(r.o*r.s)}">${r.o*r.s}</span></td></tr>`).join('')}</tbody></table>
+ ${used.length?`<div class="ref"><h2>REFERANSLAR</h2>${used.map(n=>`<div><b>${n}</b>${MEV[n]}</div>`).join('')}</div>`:''}
+ <div class="sign"><div><b>HAZIRLAYAN</b><br>${v('haz')}<br>${v('unv')}</div><div><b>ONAYLAYAN</b><br>${v('firma')}<br>İşveren/İşveren Vekili</div></div>`;
+ document.title='Saha Gözlem Raporu '+$('rno').value;
+ window.print();
+}
+render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
